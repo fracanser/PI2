@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s # Recoger métricas cada 15 segundos
+
+scrape_configs:
+  - job_name: 'apache-server'
+    static_configs:
+      # Usamos el nombre del contenedor de apache gracias a la red de Docker
+      - targets: ['contenedor-apache:80']
