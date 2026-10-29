@@ -4,6 +4,7 @@ terraform {
 
     workspaces {
       name = "PI2-Johann-Fran"
+
     }
   }
 
