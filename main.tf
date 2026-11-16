@@ -1,35 +1,13 @@
-terraform {
-  # Estado local (terraform.tfstate en esta carpeta): no requiere login en Terraform Cloud
-  backend "local" {
-    path = "terraform.tfstate"
-  }
-
-  required_providers {
-    docker = {
-      source  = "kreuzwerker/docker"
-      version = "~> 3.0"
-    }
-  }
-}
-
-provider "docker" {
-  # Conexión por defecto con el socket local de Docker en la máquina
-}
-
-# 0. VOLÚMENES PERSISTENTES (Para que no se borren datos al hacer destroy)
+# 0. VOLÚMENES PERSISTENTES (se conservan aunque se borren los contenedores)
 resource "docker_volume" "datos_mariadb" {
   name = "volumen-datos-mariadb"
-}
-
-resource "docker_volume" "datos_apache" {
-  name = "volumen-datos-apache"
 }
 
 resource "docker_volume" "datos_grafana" {
   name = "volumen-datos-grafana"
 }
 
-# 1. DEFINICIÓN DE REDES
+# 1. REDES
 resource "docker_network" "red_backend" {
   name = "red-backend"
 }
@@ -38,34 +16,52 @@ resource "docker_network" "red_monitoreo" {
   name = "red-monitoreo"
 }
 
-# 2. CONTENEDOR: MARIADB (Base de Datos con Volumen Persistente)
+# 2. MARIADB
 resource "docker_container" "mariadb" {
   name  = "contenedor-mariadb"
-  image = "mariadb:latest"
+  image = "mariadb:11"
   env = [
-    "MYSQL_ROOT_PASSWORD=mi_clave_secreta",
-    "MYSQL_DATABASE=mi_web_db"
+    "MYSQL_ROOT_PASSWORD=${var.db_root_password}",
+    "MYSQL_DATABASE=${var.db_name}"
   ]
+
   networks_advanced {
     name = docker_network.red_backend.name
   }
-  
-  # Persistencia de datos de MariaDB
+
   volumes {
-    host_path      = "${path.cwd}/volumenes/datos-MariaDB"
+    volume_name    = docker_volume.datos_mariadb.name
     container_path = "/var/lib/mysql"
   }
 }
 
-# 3. CONTENEDOR: APACHE (Servidor Web con Volumen Persistente)
+# 3. APACHE (web en carpeta local + mod_status para el exporter)
 resource "docker_container" "apache" {
   name  = "contenedor-apache"
-  image = "httpd:latest"
+  image = "httpd:2.4"
+
+  # Activa /server-status y arranca Apache
+  command = [
+    "sh", "-c",
+    "echo 'Include conf/status.conf' >> /usr/local/apache2/conf/httpd.conf && exec httpd-foreground"
+  ]
+
+  upload {
+    file    = "/usr/local/apache2/conf/status.conf"
+    content = <<-EOT
+      ExtendedStatus On
+      <Location "/server-status">
+        SetHandler server-status
+        Require all granted
+      </Location>
+    EOT
+  }
+
   ports {
     internal = 80
     external = 8080
   }
-  # Conectado a ambas redes: habla con la BD y permite que lo monitoreen
+
   networks_advanced {
     name = docker_network.red_backend.name
   }
@@ -73,47 +69,78 @@ resource "docker_container" "apache" {
     name = docker_network.red_monitoreo.name
   }
 
-  # Persistencia de los archivos web de Apache
+  # Tus archivos web (debe existir volumenes/datos-Apache/index.html)
   volumes {
     host_path      = "${path.cwd}/volumenes/datos-Apache"
     container_path = "/usr/local/apache2/htdocs/"
   }
 }
 
-# 4. CONTENEDOR: PROMETHEUS (Métricas)
-resource "docker_container" "prometheus" {
-  name  = "contenedor-prometheus"
-  image = "prom/prometheus:latest"
-  ports {
-    internal = 9090
-    external = 9090
-  }
+# 4. EXPORTER DE APACHE (traduce /server-status a métricas de Prometheus)
+resource "docker_container" "apache_exporter" {
+  name  = "contenedor-apache-exporter"
+  image = "lusotycoon/apache-exporter:latest"
+
+  command = ["--scrape_uri=http://contenedor-apache/server-status?auto"]
+
   networks_advanced {
     name = docker_network.red_monitoreo.name
   }
 
-  # Conecta tu archivo de configuración local con el contenedor
+  depends_on = [docker_container.apache]
+}
+
+# 5. PROMETHEUS
+resource "docker_container" "prometheus" {
+  name  = "contenedor-prometheus"
+  image = "prom/prometheus:v2.55.1"
+
+  ports {
+    internal = 9090
+    external = 9090
+  }
+
+  networks_advanced {
+    name = docker_network.red_monitoreo.name
+  }
+
   volumes {
     host_path      = "${path.cwd}/prometheus.yml"
     container_path = "/etc/prometheus/prometheus.yml"
   }
 }
 
-# 5. CONTENEDOR: GRAFANA (Visualización con Volumen Persistente)
+# 6. GRAFANA (con el datasource de Prometheus ya configurado)
 resource "docker_container" "grafana" {
   name  = "contenedor-grafana"
-  image = "grafana/grafana:latest"
+  image = "grafana/grafana:11.3.0"
+
   ports {
     internal = 3000
     external = 3000
   }
+
   networks_advanced {
     name = docker_network.red_monitoreo.name
   }
 
-  # Persistencia de configuraciones, paneles y usuarios de Grafana
+  upload {
+    file    = "/etc/grafana/provisioning/datasources/prometheus.yml"
+    content = <<-EOT
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://contenedor-prometheus:9090
+          isDefault: true
+    EOT
+  }
+
   volumes {
-    host_path      = "${path.cwd}/volumenes/datos-Grafana"
+    volume_name    = docker_volume.datos_grafana.name
     container_path = "/var/lib/grafana"
   }
+
+  depends_on = [docker_container.prometheus]
 }

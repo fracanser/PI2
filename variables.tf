@@ -1,16 +1,12 @@
-variable "aws_region" {
-  description = "Región de despliegue en AWS"
+variable "db_root_password" {
+  description = "Contraseña root de MariaDB"
   type        = string
-  default     = "eu-west-1"
+  sensitive   = true
+  default     = "mi_clave_secreta" # Cámbiala con: terraform apply -var="db_root_password=otra"
 }
 
-variable "instance_type" {
-  description = "Tipo de instancia EC2 para la infraestructura"
+variable "db_name" {
+  description = "Nombre de la base de datos inicial"
   type        = string
-  default     = "t3.medium" # Suficiente para Docker, Prometheus y Grafana
-}
-
-variable "key_name" {
-  description = "Nombre de la clave SSH para acceder a la instancia"
-  type        = string
+  default     = "mi_web_db"
 }
