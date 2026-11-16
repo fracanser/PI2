@@ -1,10 +1,7 @@
 terraform {
-  backend "remote" {
-    organization = "PI-2-ASIR"
-
-    workspaces {
-      name = "PI2-Johann-Fran"
-    }
+  # Estado local (terraform.tfstate en esta carpeta): no requiere login en Terraform Cloud
+  backend "local" {
+    path = "terraform.tfstate"
   }
 
   required_providers {
