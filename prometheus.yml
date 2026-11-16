@@ -11,3 +11,7 @@ scrape_configs:
   - job_name: 'apache'
     static_configs:
       - targets: ['contenedor-apache-exporter:9117']
+ # 3. Monitorear MariaDB a través de su exporter
+  - job_name: 'mariadb'
+    static_configs:
+      - targets: ['contenedor-mysqld-exporter:9104']

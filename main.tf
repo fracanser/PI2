@@ -34,6 +34,35 @@ resource "docker_container" "mariadb" {
     container_path = "/var/lib/mysql"
   }
 }
+# EXPORTER DE MARIADB (traduce el estado de la BD a métricas de Prometheus)
+resource "docker_container" "mysqld_exporter" {
+  name  = "contenedor-mysqld-exporter"
+  image = "prom/mysqld-exporter:v0.16.0"
+
+  command = ["--config.my-cnf=/etc/mysqld_exporter.cnf"]
+
+  # Credenciales para conectar a MariaDB
+  upload {
+    file    = "/etc/mysqld_exporter.cnf"
+    content = <<-EOT
+      [client]
+      user=root
+      password=${var.db_root_password}
+      host=contenedor-mariadb
+      port=3306
+    EOT
+  }
+
+  # Necesita ver a MariaDB (red-backend) y ser visto por Prometheus (red-monitoreo)
+  networks_advanced {
+    name = docker_network.red_backend.name
+  }
+  networks_advanced {
+    name = docker_network.red_monitoreo.name
+  }
+
+  depends_on = [docker_container.mariadb]
+}
 
 # 3. APACHE (web en carpeta local + mod_status para el exporter)
 resource "docker_container" "apache" {
